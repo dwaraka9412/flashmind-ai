@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+gunicorn
 sentence-transformers
 scikit-learn
 python-multipart
