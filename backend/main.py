@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
+import os
 
 from similarity import detect_duplicates
 from hallucination import detect_hallucinations
@@ -8,10 +9,9 @@ from hallucination import detect_hallucinations
 from sentence_transformers import SentenceTransformer
 from sklearn.decomposition import PCA
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
 app = FastAPI()
 
+# CORS (for frontend access)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,128 +20,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load model once
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+
 @app.get("/")
 def home():
+    return {"message": "FlashMind AI Backend Running 🚀"}
 
-    return {
-        "message": "FlashMind AI Backend Running"
-    }
 
 @app.post("/upload")
-async def upload_files(
-    files: List[UploadFile] = File(...)
-):
+async def upload_files(files: List[UploadFile] = File(...)):
 
     flashcards = []
 
     for file in files:
-
         content = await file.read()
-
         text = content.decode("utf-8")
 
-        lines = text.split("\n")
-
-        for line in lines:
-
+        for line in text.split("\n"):
             clean = line.strip()
-
             if clean:
                 flashcards.append(clean)
 
-    # Duplicate Detection
+    # Detect duplicates
     duplicates = detect_duplicates(flashcards)
 
-    # Hallucination Detection
-    hallucinations = detect_hallucinations(
-        flashcards
-    )
+    # Detect hallucinations
+    hallucinations = detect_hallucinations(flashcards)
 
-    # Remove Duplicates
-    duplicate_items = set()
+    # Remove duplicates
+    duplicate_items = set(d["flashcard2"] for d in duplicates)
 
-    for item in duplicates:
+    cleaned_flashcards = [
+        card for card in flashcards if card not in duplicate_items
+    ]
 
-        duplicate_items.add(
-            item["flashcard2"]
-        )
-
-    cleaned_flashcards = []
-
-    for card in flashcards:
-
-        if card not in duplicate_items:
-
-            cleaned_flashcards.append(card)
-
-    # AI Scatter Plot Data
+    # PCA visualization
     plot_data = []
 
     if len(flashcards) >= 2:
-
-        embeddings = model.encode(
-            flashcards
-        )
-
+        embeddings = model.encode(flashcards)
         pca = PCA(n_components=2)
-
-        points = pca.fit_transform(
-            embeddings
-        )
+        points = pca.fit_transform(embeddings)
 
         for i, point in enumerate(points):
-
             plot_data.append({
-
                 "x": float(point[0]),
                 "y": float(point[1]),
                 "name": flashcards[i]
-
             })
 
-    # Average Similarity
-    avg_similarity = 0
-
-    if len(duplicates) > 0:
-
-        avg_similarity = sum(
-
-            d["score"]
-            for d in duplicates
-
-        ) / len(duplicates)
-
-    unique_flashcards = len(
-        cleaned_flashcards
+    # Average similarity
+    avg_similarity = (
+        sum(d["score"] for d in duplicates) / len(duplicates)
+        if duplicates else 0
     )
 
     return {
-
-        "message":
-        "Duplicate analysis completed",
-
-        "duplicates":
-        duplicates,
-
-        "hallucinations":
-        hallucinations,
-
-        "plot_data":
-        plot_data,
-
-        "cleaned_flashcards":
-        cleaned_flashcards,
-
-        "total_flashcards":
-        len(flashcards),
-
-        "duplicate_count":
-        len(duplicates),
-
-        "unique_flashcards":
-        unique_flashcards,
-
-        "average_similarity":
-        round(avg_similarity * 100, 2)
-
+        "message": "Duplicate analysis completed",
+        "duplicates": duplicates,
+        "hallucinations": hallucinations,
+        "plot_data": plot_data,
+        "cleaned_flashcards": cleaned_flashcards,
+        "total_flashcards": len(flashcards),
+        "duplicate_count": len(duplicates),
+        "unique_flashcards": len(cleaned_flashcards),
+        "average_similarity": round(avg_similarity * 100, 2)
     }
+
+
+# Render compatibility (IMPORTANT)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=port)
